@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Urban Heat Dashboard — AI Edition</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+
+<style>
+  :root{
+    --bg:#0b1220; --card:#0f1724; --muted:#99a0b3; --accent:#ff6b35; --good:#22c55e;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;
+    background:linear-gradient(180deg,#071022 0%, #071428 40%, #071229 100%);
+    color:#e6eef8; -webkit-font-smoothing:antialiased;
+  }
+  .app{ max-width:1100px; margin:18px auto; padding:18px; }
+  header{display:flex;align-items:center;gap:18px}
+  h1{font-size:20px;margin:0}
+  .controls{
+    display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap;
+  }
+  input[type="text"]{
+    padding:10px 12px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);
+    background:rgba(255,255,255,0.02); color:#e6eef8; min-width:260px;
+  }
+  select, button{padding:10px 14px;border-radius:10px;border:0;cursor:pointer}
+  button{background:var(--accent); color:#071229; font-weight:600}
+  #layout{display:grid;grid-template-columns:1fr 420px; gap:16px; margin-top:16px}
+  .map-card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px;padding:0.5rem;box-shadow: 0 10px 30px rgba(2,6,23,0.6)}
+  #map{height:560px;border-radius:8px;overflow:hidden;border:1px solid rgba(255,255,255,0.03)}
+  .panel{background:var(--card); border-radius:12px; padding:14px; min-height:560px; box-shadow: inset 0 1px 0 rgba(255,255,255,0.02) }
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+  .card{background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+  .card h3{margin:0;font-size:14px;color:var(--muted)}
+  .card p{margin:8px 0 0;font-size:20px;font-weight:700}
+  .uhs{display:flex;align-items:center;gap:10px}
+  .uhs .bar{height:12px;background:rgba(255,255,255,0.06);border-radius:8px;flex:1;overflow:hidden}
+  .uhs .bar > i{display:block;height:100%;background:linear-gradient(90deg,#ffb4a2,#ff6b35);width:40%}
+  .suggestions{margin-top:12px}
+  .suggestions h4{margin:0 0 8px 0;color:var(--muted)}
+  .suggestions ul{margin:0;padding-left:18px;color:#dbe9ff}
+  .muted{color:var(--muted);font-size:13px;margin-top:6px}
+  .footer{color:var(--muted);font-size:12px;margin-top:10px}
+  #history{margin-top:10px}
+  #history li{margin:4px 0;color:#cfe1ff}
+  @media(max-width:980px){ #layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Urban Heat Dashboard — AI Edition</h1>
+      <div class="muted">City-level map + AI-estimated Urban Heat Index via backend ML service.</div>
+    </header>
+
+    <div class="controls">
+      <input id="query" type="text" placeholder="e.g., New Delhi, India or Los Angeles, USA" />
+      <select id="samples">
+        <option value="">— sample cities —</option>
+        <option>Ahmedabad, India</option>
+        <option>Chennai, India</option>
+        <option>Shillong, India</option>
+        <option>Patna, India</option>
+        <option>Detroit, USA</option>
+        <option>San Diego, USA</option>
+        <option>Los Angeles, USA</option>
+      </select>
+      <button id="go">Analyze</button>
+      <button id="refreshHistory" title="Show history">History</button>
+    </div>
+
+    <div id="layout">
+      <div class="map-card">
+        <div id="map"></div>
+        <div class="muted" style="padding:8px 6px">Zoom & pan map. Heat overlay uses AI-predicted UHI from backend.</div>
+      </div>
+
+      <aside class="panel">
+        <div class="stats">
+          <div class="card">
+            <h3>Average Temp</h3>
+            <p id="avgTemp">— °C</p>
+            <div class="muted" id="avgNote">Source: —</div>
+          </div>
+          <div class="card">
+            <h3>Typical High</h3>
+            <p id="highTemp">— °C</p>
+            <div class="muted">Peak daytime (estimated)</div>
+          </div>
+          <div class="card">
+            <h3>Typical Low</h3>
+            <p id="lowTemp">— °C</p>
+            <div class="muted">Nighttime low (estimated)</div>
+          </div>
+          <div class="card">
+            <h3>Urban Heat Index (UHI)</h3>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div id="uhsValue" style="font-size:20px;font-weight:700">—</div>
+              <div class="uhs"><div class="bar" id="uhsBar"><i style="width:0%"></i></div><div id="uhsLabel" class="muted">—</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="suggestions">
+          <h4>Suggestions & planning advice</h4>
+          <div id="advice">Pick a city and click Analyze — tailored suggestions will appear here.</div>
+          <div class="muted" id="note">—</div>
+        </div>
+
+        <div class="footer">
+          <button id="demoAhmedabad">Quick demo: Ahmedabad</button>
+          <ul id="history"></ul>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+<script>
+const map = L.map('map', {zoomControl:true}).setView([20.6, 78.9], 3);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+let heatLayer = null;
+let centerMarker = null;
+
+const queryEl = document.getElementById('query');
+const samplesEl = document.getElementById('samples');
+const goBtn = document.getElementById('go');
+const refreshBtn = document.getElementById('refreshHistory');
+const demoBtn = document.getElementById('demoAhmedabad');
+
+const avgEl = document.getElementById('avgTemp');
+const highEl = document.getElementById('highTemp');
+const lowEl = document.getElementById('lowTemp');
+const uhsValueEl = document.getElementById('uhsValue');
+const uhsBarEl = document.querySelector('#uhsBar > i');
+const uhsLabelEl = document.getElementById('uhsLabel');
+const adviceEl = document.getElementById('advice');
+const avgNoteEl = document.getElementById('avgNote');
+const noteEl = document.getElementById('note');
+const historyEl = document.getElementById('history');
+
+samplesEl.addEventListener('change', ()=> { queryEl.value = samplesEl.value; });
+
+const clamp = (v,a,b)=> Math.max(a,Math.min(b,v));
+function uhiCategory(uhi){
+  if(uhi < 33) return {label:"Low"};
+  if(uhi < 66) return {label:"Moderate"};
+  return {label:"High"};
+}
+function generateHeatPoints(coords, uhi, count=200){
+  const [lat, lon] = coords;
+  const pts = [];
+  const spreadBase = 0.018;
+  const spread = spreadBase * (1 + (60 - clamp(uhi,0,100))/150);
+  for(let i=0;i<count;i++){
+    const r = Math.random() * spread;
+    const a = Math.random()*Math.PI*2;
+    const plat = lat + (r * Math.cos(a) * (0.5 + Math.random()*2));
+    const plon = lon + (r * Math.sin(a) * (0.5 + Math.random()*2));
+    const intensity = clamp((uhi/100) * (0.5 + Math.random()*0.9), 0.03, 1.0);
+    pts.push([plat, plon, intensity]);
+  }
+  return pts;
+}
+function renderResult(d){
+  map.setView(d.coords, 12);
+  if(centerMarker) map.removeLayer(centerMarker);
+  centerMarker = L.circle(d.coords, {radius:500, color: d.uhi>60? '#ff6b35' : d.uhi>40? '#f59e0b' : '#22c55e', weight:1.6, fillOpacity:0.06}).addTo(map);
+  if(heatLayer) { map.removeLayer(heatLayer); heatLayer = null; }
+  const pts = generateHeatPoints(d.coords, d.uhi, 220);
+  heatLayer = L.heatLayer(pts, {radius:24, blur:18, maxZoom:15}).addTo(map);
+
+  avgEl.textContent  = d.avg.toFixed(1) + " °C";
+  highEl.textContent = d.high.toFixed(1) + " °C";
+  lowEl.textContent  = d.low.toFixed(1) + " °C";
+  uhsValueEl.textContent = Math.round(d.uhi) + " / 100";
+  uhsBarEl.style.width = clamp(d.uhi,0,100) + "%";
+  uhsLabelEl.textContent = uhiCategory(d.uhi).label;
+  adviceEl.innerHTML = d.adviceHtml;
+  avgNoteEl.textContent = d.source || "—";
+  noteEl.textContent = d.note || "";
+}
+
+async function analyzeCity(q){
+  const r = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: q })
+  });
+  if(!r.ok){ alert('Server error'); return; }
+  const d = await r.json();
+  renderResult(d);
+}
+
+async function loadHistory(){
+  const r = await fetch('/api/history');
+  const arr = await r.json();
+  historyEl.innerHTML = arr.map(row => `<li>${row.created_at} — ${row.city} (UHI: ${Math.round(row.uhi)})</li>`).join("");
+}
+
+goBtn.addEventListener('click', ()=> {
+  const q = (queryEl.value || samplesEl.value || "").trim();
+  if(!q){ alert("Type a city (or choose a sample) and click Analyze."); return; }
+  analyzeCity(q);
+});
+refreshBtn.addEventListener('click', loadHistory);
+demoBtn.addEventListener('click', ()=> analyzeCity('Ahmedabad, India'));
+
+queryEl.addEventListener('keydown', (e)=> { if(e.key === 'Enter') goBtn.click(); });
+
+window.addEventListener('load', ()=> {
+  analyzeCity('Ahmedabad, India');
+  loadHistory();
+});
+</script>
+</body>
+</html>
